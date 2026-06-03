@@ -1,5 +1,3 @@
-import { Action, type ActionType } from "./actions";
-
 type dist_item = {
     v: number,
     p: number
@@ -237,10 +235,45 @@ class GameState {
     public playerHands: string[][] =  [];
     public hokm: string = "";
     public turn = -1;
-
+    
     constructor() {};
 
 }
+
+class SpecialCharacter {    
+
+    public nothing: boolean = false;
+    // Enf of hand
+    public eoh: boolean = false;
+    // End of round
+    public eor: boolean = false;
+
+    public value: string;
+
+    constructor(value: string) {
+        this.value = value;
+        this.nothing = true;
+    };
+
+    static Nothing(value: string) {
+        return new SpecialCharacter(value);
+    }
+
+    static Eoh(value: string) {
+        const s = new SpecialCharacter(value);
+        s.nothing = false;
+        s.eoh = true;
+        return s;
+    }
+
+    static Eor(value: string) {
+        const s = new SpecialCharacter(value);
+        s.nothing = false;
+        s.eor = true; 
+        return s;
+    }
+
+};
 
 class GameCore {
 
@@ -267,90 +300,119 @@ class GameCore {
         return this.players[this.state.turn] !== player; 
     }
 
+    // having bad cards in the floor will result in bad winner evaluation
     evalWinner() {
 
-        let cut = false;
-        let winnerValue = this.state.floor[0]![1]!;
+        let zamineh = this.state.floor[0][0];
+        let winnerValue = this.state.floor[0][1];
         let winner = 0;
+        let cut = false;
 
-        for(let i = 0; i < 4; i++) {
+        for(let i = 1; i < 4; i++) {
             
             const card = this.state.floor[i]!;
             const khal = card[0];
-            const value = card[1]!;
+            const value = card[1];
+
+            if(khal !== this.state.hokm && khal !== zamineh) {
+                continue;
+            }
 
             if(cut && khal == this.state.hokm && compareCardValues(value, winnerValue)) {
                 winner = i;
-                winnerValue = value; 
+                winnerValue = value;
+                continue
+            };
+
+            if(!cut && khal == this.state.hokm && khal !== zamineh) {
+                winner = i;
+                winnerValue = value;
+                cut = true;
+                continue
             }
 
-            if(compareCardValues(value, winnerValue)) {
+            if(!cut && compareCardValues(value, winnerValue)) {
                 winner = i;
                 winnerValue = value;
             }
 
         };
 
-        return (this.state.turn + 3 - winner);
+        return ((this.state.turn + 1)%4 + winner)%4;
 
     };
 
-    declare(hokm: string, player: string): Result<string> {
+    declare(hokm: string, player: string) {
             
         if(this.outOfTurn(player)) {
-            return new Err("out_of_turn");
+            throw new Error("out_of_turn");
         }
 
         if(!["C", "S", "H", "D"].includes(hokm)) {
-            return new Err("invalid_hokm");
+            throw new Error("invalid_hokm");
         };
 
         this.state.hokm = hokm;
-        return new Ok("");
 
     }
 
-    play(card: string, player: string): Result<string> {
-
+    play(card: string, player: string): SpecialCharacter {
+ 
         if(this.outOfTurn(player)) {
-            return new Err("illegal");
+            throw new Error("out  of turn");
         }
 
-        
         let hand = this.state.playerHands[this.state.turn]!;
         const cardIdx = hand.indexOf(card);
 
         if(cardIdx == -1) {
-            return new Err("illegal");
+            throw new Error("card not in hand");
         }
 
         if(this.state.floor.length == 0) {
-            hand = hand.splice(cardIdx, 1);
+            hand.splice(cardIdx, 1);
             this.state.playerHands[this.state.turn] = hand;
             this.state.floor.push(card);
-            this.state.turn += 1;
-            return new Ok("");
+            this.state.turn = (1 + this.state.turn)%4;
+            return SpecialCharacter.Nothing("");
         };
 
-        if(hand[0] != this.state.floor[0]![0] || hand[0] != this.state.hokm) {
-            return new Err("illegal");
-        }
+        if(card[0] !== this.state.floor[0][0]) {
+            for(const handCard of hand) {
+                if(handCard[0] == this.state.floor[0]![0])
+                    throw new Error("illegal");
+            };
+        };
 
-        hand.splice(cardIdx);
+        hand.splice(cardIdx, 1);
         this.state.playerHands[this.state.turn] = hand;
         this.state.floor.push(card);
-        this.state.turn += 1;
+        this.state.turn = (1 + this.state.turn)%4;
 
         if(this.state.floor.length == 4) {
 
+            this.state.turn -= 1;
             const winner = this.evalWinner();
-            const idx = Math.ceil(winner/2);
+            const idx = winner%2;
             this.state.roundScore[idx] = this.state.roundScore[idx]! + 1;
             this.state.turn = winner;
 
+            this.state.floor = [];
+
+            // round score of the first team [x, _, x, _] are stored in roundScore[0]
+            if(this.state.roundScore[0] == 3) {
+                return SpecialCharacter.Eor("0");
+            }
+
+            if(this.state.roundScore[1] == 3) {
+                return SpecialCharacter.Eor("1");
+            }
+            
+            return SpecialCharacter.Eoh(this.players[winner]!);
+
         };
 
-        return new Ok("");
+        return SpecialCharacter.Nothing("");
 
     }
 
@@ -358,18 +420,18 @@ class GameCore {
 
 };
 
-type EventType = "declare" | "play" | "handend" | "roundend" | "gameend" | "noevent";
+type MessageType = "declare" | "play" | "handend" | "roundend" | "gameend" | "nomessage";
 
-class Event {
+class Message {
 
     public resolver: string;
-    public eventType: EventType;
+    public messageType: MessageType;
     // timeout 
     public time = 12;
 
-    constructor(resolver: string, eventType: EventType) {
+    constructor(resolver: string, messageType: MessageType) {
         this.resolver = resolver;
-        this.eventType = eventType;
+        this.messageType = messageType;
     }
 
 }
@@ -383,8 +445,9 @@ export class Game {
 
     public deck: Deck;
     public core: GameCore = new GameCore();
+    public turnStart: number = -1;
 
-    public currentEvent: Event = new Event("server", "noevent");
+    public history: string[] = [];
 
     constructor(id: string) {
         
@@ -417,6 +480,7 @@ export class Game {
     public playerTeam(player: string) {
      
         const team1 = this.players.slice(0, 2);
+        const playerIndex = this.players.indexOf(player);
 
         if(player in team1) {
             return 1;
@@ -426,63 +490,61 @@ export class Game {
 
     }
 
-    public start() {
+    public start(turn?: number) {
         this.deck.reset();
         this.deck.shuffle(5);
         this.core.setPlayers(this.players);
         this.core.setPlayerHands(this.deck.deck);
-        this.core.state.turn = Math.floor(Math.random()*4);
+        if(!turn) {
+            const rand = Math.floor(Math.random()*4);
+            this.core.state.turn = rand;
+            this.turnStart = rand;
+        }
+        else {
+            this.core.state.turn = turn;
+            this.turnStart = turn;
+        }
         return this.deck.deck;
     };
 
-    public nextEvent() {
-
-        if(this.currentEvent.eventType == "noevent") {
-            this.currentEvent = new Event(this.core.playerTurn, "declare");
-        };
-
-        if(this.currentEvent.eventType == "play") {
-
-        if(Math.max(...this.core.state.roundScore) == 7) {
-            
-            const firstTeamScore = this.core.state.roundScore[0];
-            const secondTeamScore = this.core.state.roundScore[1];
-
-            if(firstTeamScore == 7) {
-                
-                if(secondTeamScore == 0) {
-                    // marce (aka winning all the hands)
-                    this.currentEvent = new Event("m1", "handend");
-                }
-                this.currentEvent = new Event("n1", "handend");
-            }
-
-            if(firstTeamScore == 0) {
-                this.currentEvent = new Event("m2", "handend");
-            }
-            this.currentEvent = new Event("n2", "handend");
-            
-        } else
-        this.currentEvent = new Event(this.core.playerTurn + 1, "play");
-    
+    public restart(turn?: number) {
+        this.deck.reset();
+        this.deck.shuffle(8);
+        this.core.state.roundScore = [0, 0];
+        this.core.setPlayers(this.players);
+        this.core.setPlayerHands(this.deck.deck);
+        if(!turn) {
+            const rand = Math.floor(Math.random()*4);
+            this.core.state.turn = rand;
+            this.turnStart = rand;
         }
-
-        return this.currentEvent;
-        
+        else {
+            this.core.state.turn = turn;
+            this.turnStart = turn;
+        }
+        return this.deck.deck;
     };
 
-    public resolveEvent(player: string, type: EventType, resolveArg: string) {
-
-        if(type == "declare") {
-            const result = this.core.declare(resolveArg, player);
-            return result.value;
-        }
-
-        if(type == "play") {
-            const result = this.core.play(resolveArg, player); 
-            return result;
-        }
-
+    get playerTurn() {
+        return this.core.playerTurn;
     };
+
+    get turn() {
+        return this.core.state.turn;
+    }
+
+    public declare(hokm: string, player: string) {
+        return this.core.declare(hokm, player);
+    };
+
+    public play(card: string, player: string) {
+        try {
+            const r = this.core.play(card, player);
+            this.history.push(card);
+            return r;
+        } catch(e) {
+            throw e;
+        }
+    }
 
 } 

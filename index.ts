@@ -1,5 +1,3 @@
-// TODO: move crud login from web socket to the api section
-
 import {Server as Engine} from "@socket.io/bun-engine";
 import { Server, Socket } from "socket.io";
 import {default as jwt} from "jsonwebtoken";
@@ -7,18 +5,18 @@ import { type Player} from "@bazzi/shared";
 import {MemoryAdaptor} from "@bazzi/shared";
 import { Game } from "./lib/game";
 
-type EventType = "declare" | "play" | "roundend";
+type MessageType = "declare" | "play" | "roundend";
 
-class Event {
+class Message {
 
     public resolver: string;
-    public eventType: EventType;
+    public messageType: MessageType;
     // timeout 
     public time = 12;
 
-    constructor(resolver: string, eventType: EventType) {
-        this.resolver = resolver;
-        this.eventType = eventType;
+    constructor(resolver: string, messageType: MessageType) {
+        this.resolver = resolver;   
+        this.messageType = messageType;
     }
 
 }
@@ -30,6 +28,8 @@ class GameExtention {
     public game: Game;
     private playerSocketMap: Map<string, Socket>;
     public expected_players: string[];
+
+    public replay: string[][] = [];
 
     constructor(id: string, expected_players: string[]) {
         this.playerSocketMap = new Map();
@@ -65,8 +65,8 @@ class GameExtention {
         return Array.from(this.playerSocketMap.keys());
     }
 
-    public start() {
-        return this.game.start();
+    public start(turn?: number) {
+        return this.game.start(turn);
     }
 
 }
@@ -144,6 +144,10 @@ io.on("connection", (socket) => {
 
     socket.on("join", (roomID, callback) => {
 
+        if(!callback) {
+            callback = () => {};
+        }
+
         if(!socket.data.player) {
             callback({
                 ok: false,
@@ -156,12 +160,12 @@ io.on("connection", (socket) => {
         const gameExt = gamesManager.get_game(roomID);
 
         if(!gameExt) {
-            callback({ok: false, code: "no_room", message: "room doesn't exist"});
+            callback({ok: false, error: "no_room", message: "room doesn't exist"});
             return;
         }
 
         if(gameExt.players().includes(socket.data.username)) {
-            callback({ok: false, code: "already_joined", message: "already joined"});
+            callback({ok: false, error: "already_joined", message: "already joined"});
             return
         }
 
@@ -179,25 +183,25 @@ io.on("connection", (socket) => {
         }
 
         gameExt.load_players();
-        let hands = gameExt.start();
+        let hands = gameExt.start(3);
         // I am 99.99 precent sure there is no need for the update method
         // unlike the room manager the GamesManager is completly stored in memory
         gamesManager.update(roomID, gameExt);
         
         for(const [i, player] of gameExt.expected_players.entries()) {
             const socket = gameExt.get_socket(player);
-            socket.emit("hand", hands.slice(i*13, i*13 + 13));
+            socket.emit("hand", hands.slice(i*13, i*13 + 5));
         };
 
-        io.to(roomID).emit("start");
-
-        const ev = gameExt.game.nextEvent();
-
-        gameExt.get_socket(ev.resolver).emit(ev.eventType);
+        io.to(roomID).emit("start", gameExt.game.playerTurn);
 
     });
 
     socket.on("declare", (hokm: string, callback) => {
+
+        if(callback == undefined) {
+            callback = () => {};
+        }
 
         if(!socket.data.game) {
             callback({ok: false, code: 2, msg: "Not in a game"});
@@ -206,17 +210,19 @@ io.on("connection", (socket) => {
         const ext = gamesManager.get_game(socket.data.game)!;
         const resolver = socket.data.username;
 
-        if(resolver !== ext.game.currentEvent.resolver ||
-           "declare" !== ext.game.currentEvent.eventType
-        ) {
-            callback({ok: false, code: 3, msg: "Could not resolve event"});
-        }
-
         try {
 
-            ext.game.resolveEvent(resolver, "declare", hokm);
+            ext.game.declare(hokm, resolver);
+            ext.replay.push(["declare", hokm, resolver]);
+            socket.broadcast.to(socket.data.game).emit("declare", hokm);
+            
+            for(const [i, player] of ext.expected_players.entries()) {
+                const socket = ext.get_socket(player);
+                socket.emit("hand",
+                    ext.game.core.state.playerHands[i].slice(5, 13)
+                )
+            };
 
-            socket.to(socket.data.game).emit("declartion", hokm);
             return
 
         } catch {
@@ -226,6 +232,10 @@ io.on("connection", (socket) => {
     });
 
     socket.on("play", (card, callback) => {
+    
+        if(callback == undefined) {
+            callback = () => {};
+        }
 
         if(!socket.data.game) {
             callback({ok: false, code: 2, msg: "Not in a game"});
@@ -234,20 +244,61 @@ io.on("connection", (socket) => {
         const ext = gamesManager.get_game(socket.data.game)!;
         const resolver = socket.data.username;
 
-        if(resolver !== ext.game.currentEvent.resolver ||
-           "play" !== ext.game.currentEvent.eventType
-        ) {
-            callback({ok: false, code: 3, msg: "Could not resolve event"});
-        }
-
         try {
 
-            ext.game.resolveEvent(resolver, "play", card);
+            const ch = ext.game.play(card, resolver);
+            
+            ext.replay.push(["play", card, resolver]);
+            socket.broadcast.to(socket.data.game).emit("play", card);
 
-            socket.to(socket.data.game).emit("played", card);
+            if(ch.eoh) {
+
+            ext.replay.push(["hand_end", ch.value]);
+            io.to(socket.data.game).emit("hand_end", ch.value);
+            return;
+
+            }
+
+            if(ch.eor) {
+
+            const turnStart = ext.game.turnStart;
+            const winnerTeam = Number(ch.value);
+
+            let hands: string[] = [];
+
+            if(turnStart%2 != winnerTeam) {
+                // this sets the turns properly
+                hands = ext.game.restart((turnStart + 1)%4);
+                
+                ext.game.core.state.turn = ext.game.turnStart;
+            } else {
+                // this sets the turns properly
+                hands = ext.game.restart(turnStart);
+                ext.game.core.state.turn = ext.game.turnStart;
+            }
+
+            ext.replay.push(["hand_end", ch.value, String(ch.value)]);
+            io.to(socket.data.game).emit("hand_end", ch.value);
+
+            ext.replay.push(["round_end", ch.value, String(ext.game.turnStart)]);
+            io.to(socket.data.game).emit("round_end", ch.value, ext.game.turnStart);
+
+            for(const [i, player] of ext.expected_players.entries()) {
+                const socket = ext.get_socket(player);
+                socket.emit("hand", hands.slice(i*13, i*13 + 5));
+            };
+
+            ext.replay.push(["round_start", String(ext.game.turnStart)]);
+            io.to(socket.data.game).emit("start", ext.game.playerTurn);
+            
+            return;
+
+            };
+
             return
 
-        } catch {
+        } catch(e) {
+            console.log(e);
             callback({ok: false, code: 3, msg: "illegal move"});
         }
 
@@ -321,7 +372,7 @@ const server = Bun.serve({
                 "players": game.players,
                 "score": game.game.gameScore,
                 "expected_players": game.expected_players,
-            }));
+            }), {headers: corsHeaders()});
         },
 
         "/api/game/create": async (req, params) => {
