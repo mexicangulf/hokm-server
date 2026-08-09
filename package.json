@@ -14,7 +14,6 @@
     "dev": "bun run index.ts"
   },
   "dependencies": {
-    "@bazzi/shared": "git@github.com:mexicangulf/bazzi-shared.git",
     "@socket.io/bun-engine": "^0.1.1",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/socket.io": "^3.0.2",

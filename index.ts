@@ -1,8 +1,6 @@
 import {Server as Engine} from "@socket.io/bun-engine";
 import { Server, Socket } from "socket.io";
 import {default as jwt} from "jsonwebtoken";
-import { type Player} from "@bazzi/shared";
-import {MemoryAdaptor} from "@bazzi/shared";
 import { Game } from "./lib/game";
 
 type MessageType = "declare" | "play" | "roundend";
