@@ -7,6 +7,8 @@ import { Game } from "./lib/game";
 
 type MessageType = "declare" | "play" | "roundend";
 
+const PublicKey = process.env["PUBLIC_KEY"]!;
+
 class Message {
 
     public resolver: string;
@@ -37,6 +39,7 @@ class GameExtention {
         this.expected_players = expected_players;
     }
 
+    // used in starting the game
     public add_player(player: string, socket: Socket) {
         
         if(player !in this.expected_players) {
@@ -47,16 +50,19 @@ class GameExtention {
 
     };
 
+    // used in starting the game
     public load_players() {
         for(const player of this.expected_players) {
             this.game.addPlayer(player);
         }
     };
 
+    // used for player/socket mapping both in game and start
     public assign_player_socket(player: string, socket: Socket) {
         this.playerSocketMap.set(player, socket);
     }
 
+    // used in game for getting player socket
     public get_socket(player: string) {
         return this.playerSocketMap.get(player)!;
     }
@@ -121,18 +127,20 @@ io.on("connection", (socket) => {
     socket.on("auth", async (token, callback) => {
 
         // ENABLE THIS FOR AUTH
-        // try {
+        try {
             
-        //     const payload = jwt.verify(token, process.env.JWT_SECRET!);
+            const payload = jwt.verify(token, PublicKey, { algorithms: ["RS256"] });
             
-        //     socket.data.player = payload;
-        //     socket.data.authenticated = true;
-        //     socket.emit("auth_success", { message: "Authentication successful" });
-        // } catch (err) {
+            socket.data.player = payload;
+            socket.data.authenticated = true;
+            socket.emit("auth_success", { message: "Authentication successful" });
 
-        //     socket.emit("auth_error", { message: "Invalid or expired token" });
-        //     socket.disconnect(true);
-        // }
+        } catch (err) {
+
+            socket.emit("auth_error", { message: "Invalid or expired token" });
+            socket.disconnect(true);
+
+        }
 
         socket.data.player = token;
         socket.data.username = token;
@@ -183,10 +191,7 @@ io.on("connection", (socket) => {
         }
 
         gameExt.load_players();
-        let hands = gameExt.start(3);
-        // I am 99.99 precent sure there is no need for the update method
-        // unlike the room manager the GamesManager is completly stored in memory
-        gamesManager.update(roomID, gameExt);
+        let hands = gameExt.start(Math.floor(Math.random()*3));
         
         for(const [i, player] of gameExt.expected_players.entries()) {
             const socket = gameExt.get_socket(player);
@@ -310,9 +315,10 @@ function withAuthorization(req: Bun.BunRequest) {
 
         const AuthHeader = req.headers.get("Authorization");
 
-        // the first part is Bearer
+        // the first part is Bearer i must check for that too
         let token = AuthHeader?.split(" ")[1];
 
+        // cookie fallback
         if(!token) {
             const temp = req.cookies.get("authorization");
             if(temp == null) {
@@ -367,11 +373,11 @@ const server = Bun.serve({
             }
 
             game = game!;
+
             return new Response(JSON.stringify({
                 "id": id,
-                "players": game.players,
                 "score": game.game.gameScore,
-                "expected_players": game.expected_players,
+                "players": game.expected_players,
             }), {headers: corsHeaders()});
         },
 
@@ -382,35 +388,38 @@ const server = Bun.serve({
             }
 
             const body = await req.json();
-            const id = body.id;
+            const id = body.matchId;
 
             if(!id) {
                 return new Response("Bad Request", {status: 400});
             }
 
-            const authHeader = req.headers.get("Authorization");
-            const [verb, key] = authHeader?.split(" ")!;
+            // const authHeader = req.headers.get("Authorization");
+            // const [verb, key] = authHeader?.split(" ")!;
 
-            // this snippet is stupid
-            // if(verb !== "Basic" && verb !== "App") {
-            //     return new Response("Bad Request", {status: 400});
+            // if(!key) {
+            //     return new Response("Not Authorized", {status: 401});
             // }
-
-            if(!key) {
-                return new Response("Not Authorized", {status: 401});
-            }
 
             let data = undefined;
                 
-            try {
-                data = jwt.verify(key, process.env.JWT_SECRET!);            
-            } catch {
-                return new Response("Not Authorized", {status: 401});
-            }
+            // try {
+            //     data = jwt.verify(key, PublicKey, { algorithms: ["RS256"] });            
+            // } catch {
+            //     return new Response("Not Authorized", {status: 401});
+            // }
 
-            if((data as jwt.JwtPayload).scope == "*") {
-                gamesManager.add_game(id, new GameExtention(id, body.players));
-            };
+            // if((data as jwt.JwtPayload).scope == "*") {
+            //     gamesManager.add_game(id, new GameExtention(id, body.players));
+            // };
+
+            gamesManager.add_game(id, new GameExtention(id, body.players));
+
+            return new Response(JSON.stringify({
+                ok: true,
+                msg: "Game created",
+                id: id
+            }), {headers: corsHeaders()});
 
         },
 

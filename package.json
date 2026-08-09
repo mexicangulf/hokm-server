@@ -9,6 +9,10 @@
   "peerDependencies": {
     "typescript": "^5"
   },
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun run index.ts"
+  },
   "dependencies": {
     "@bazzi/shared": "git@github.com:mexicangulf/bazzi-shared.git",
     "@socket.io/bun-engine": "^0.1.1",
