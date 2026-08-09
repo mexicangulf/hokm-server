@@ -133,11 +133,11 @@ io.on("connection", (socket) => {
             socket.data.player = payload;
             socket.data.username = (payload as any).username;
             socket.data.authenticated = true;
-            socket.emit("auth_success", { message: "Authentication successful" });
+            callback({ message: "Authentication successful", ok: true});
 
         } catch (err) {
 
-            socket.emit("auth_error", { message: "Invalid or expired token" });
+            callback({ message: "Invalid or expired token", ok: false});
             socket.disconnect(true);
             return;
 
