@@ -123,14 +123,15 @@ io.on("connection", (socket) => {
     socket.data.authenticated = false;
     socket.data.player;
 
-    socket.on("auth", async (token, callback) => {
-
+    socket.on("auth", async (token: string, callback) => {
         // ENABLE THIS FOR AUTH
+
         try {
-            
+
             const payload = jwt.verify(token, PublicKey, { algorithms: ["RS256"] });
-            
+
             socket.data.player = payload;
+            socket.data.username = (payload as any).username;
             socket.data.authenticated = true;
             socket.emit("auth_success", { message: "Authentication successful" });
 
@@ -138,14 +139,9 @@ io.on("connection", (socket) => {
 
             socket.emit("auth_error", { message: "Invalid or expired token" });
             socket.disconnect(true);
+            return;
 
         }
-
-        socket.data.player = token;
-        socket.data.username = token.username;
-        socket.data.authenticated = true;
-        console.log(token, "connected");
-        callback({ok: true, msg: "Authentication successful"})
 
     });
 
@@ -387,7 +383,8 @@ const server = Bun.serve({
             //     gamesManager.add_game(id, new GameExtention(id, body.players));
             // };
 
-            gamesManager.add_game(id, new GameExtention(id, body.players.map));
+            const players = body.players.map((pair: any) => pair.playerId);
+            gamesManager.add_game(id, new GameExtention(id, players));
 
             return new Response(JSON.stringify({
                 ok: true,
@@ -423,7 +420,6 @@ const server = Bun.serve({
     },
     websocket,
 });
-
 
 console.log(`Server running on http://localhost:${server.port}`);
 gamesManager.add_game("0", new GameExtention("0", ["player0", "player1",
