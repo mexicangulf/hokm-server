@@ -385,7 +385,7 @@ const server = Bun.serve({
 
             console.log(body);
             const players = body.players.map((pair: any) => pair.playerId);
-            gamesManager.add_game(id, new GameExtention(id, players));
+            gamesManager.add_game(id, new GameExtention(id, Array.from(players)));
 
             return new Response(JSON.stringify({
                 ok: true,
