@@ -2,10 +2,11 @@ import {Server as Engine} from "@socket.io/bun-engine";
 import { Server, Socket } from "socket.io";
 import {default as jwt} from "jsonwebtoken";
 import { Game } from "./lib/game";
+import fs from "fs";
 
 type MessageType = "declare" | "play" | "roundend";
 
-const PublicKey = process.env["PUBLIC_KEY"]!;
+const PublicKey = fs.readFileSync("public.pem", "utf-8").trim();
 
 class Message {
 
@@ -141,7 +142,7 @@ io.on("connection", (socket) => {
         }
 
         socket.data.player = token;
-        socket.data.username = token;
+        socket.data.username = token.username;
         socket.data.authenticated = true;
         console.log(token, "connected");
         callback({ok: true, msg: "Authentication successful"})
@@ -309,31 +310,6 @@ io.on("connection", (socket) => {
 
 });
 
-function withAuthorization(req: Bun.BunRequest) {
-
-        const AuthHeader = req.headers.get("Authorization");
-
-        // the first part is Bearer i must check for that too
-        let token = AuthHeader?.split(" ")[1];
-
-        // cookie fallback
-        if(!token) {
-            const temp = req.cookies.get("authorization");
-            if(temp == null) {
-                token = undefined
-            } else {
-                token = temp;
-            }
-        }
-
-        if(!token) {
-            return false;
-        }
-
-        const user = jwt.verify(token, process.env["JWT_SECRET"]!);
-
-};
-
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
@@ -411,7 +387,7 @@ const server = Bun.serve({
             //     gamesManager.add_game(id, new GameExtention(id, body.players));
             // };
 
-            gamesManager.add_game(id, new GameExtention(id, body.players));
+            gamesManager.add_game(id, new GameExtention(id, body.players.map));
 
             return new Response(JSON.stringify({
                 ok: true,
@@ -447,6 +423,7 @@ const server = Bun.serve({
     },
     websocket,
 });
+
 
 console.log(`Server running on http://localhost:${server.port}`);
 gamesManager.add_game("0", new GameExtention("0", ["player0", "player1",
